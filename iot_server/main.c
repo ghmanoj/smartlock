@@ -109,11 +109,11 @@ void *publisher_thread(void *args) {
         // generate_json_str ( buffer );
 
         char *data = create_monitor();
-
-        zmq_send ( publisher, PUBLISH_TOPIC, strlen (PUBLISH_TOPIC), ZMQ_SNDMORE );
-        zmq_send ( publisher, data, strlen ( data ), ZMQ_DONTWAIT );
-
-        free ( data );
+        if (data) {
+            zmq_send ( publisher, PUBLISH_TOPIC, strlen (PUBLISH_TOPIC), ZMQ_SNDMORE );
+            zmq_send ( publisher, data, strlen ( data ), ZMQ_DONTWAIT );
+            free ( data );
+        }
 
         sleep ( 1 );
     }
@@ -186,6 +186,7 @@ void generate_json_str (char *buffer) {
 
 //create a monitor with a list of supported resolutions
 //NOTE: Returns a heap allocated string, you are required to free it after use.
+// https://github.com/DaveGamble/cJSON
 char *create_monitor(void)
 {
     const unsigned int resolution_numbers[3][2] = {

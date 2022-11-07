@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "logger.h": "c",
+        "smart_lock_dsa.h": "c",
+        "cjson.h": "c"
+    }
+}

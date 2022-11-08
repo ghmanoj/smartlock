@@ -19,14 +19,18 @@ void dbg_log ( const char *message )
 }
 
 
-const char PUBLISH_TOPIC[]   = "cmd/series100/group-3/lock-1/";
-const char SERVER_PUBADDR[]  = "tcp://*:9091";
+const char PUBLISH_TOPIC[]      = "cmd/series100/group-3/lock-1/+";
+const char SERVER_PUBADDR[]     = "tcp://*:9091";
+const char SERVER_COLLECTADDR[] = "tcp://*:9092";
 
 
-int pubthread_arg   = 0;
-bool close_app      = false;
+int pubthread_arg           = 0;
+int collectorthread_arg     = 0;
+bool close_app              = false;
+
 
 pthread_t pubthread_id;
+pthread_t collectorthread_id;
 
 
 /* ZMQ context */
@@ -36,9 +40,10 @@ void *context;
 /* prototypes */
 void cleanup();
 void *publisher_thread();
-void generate_json_str(char *buffer);
+void *collector_thread();
 
-char *create_monitor(void);
+char *create_payload(const char *client_id, const char *session_id, const char *topic);
+
 
 static void signal_handler(int sig) {
     close_app = true;
@@ -76,10 +81,17 @@ int main() {
 
     context = zmq_ctx_new ();
 
-    if (pthread_create (&pubthread_id, NULL, (void*)publisher_thread, &pubthread_arg) != 0) {
+    if (pthread_create (&pubthread_id, NULL, 
+                    (void*)publisher_thread, &pubthread_arg) != 0) {
         perror ("pthread_create()");
         cleanup();
+        exit ( EXIT_FAILURE );
+    }
 
+    if (pthread_create (&collectorthread_id, NULL, 
+                    (void*)collector_thread, &collectorthread_arg) != 0) {
+        perror ("pthread_create()");
+        cleanup();
         exit ( EXIT_FAILURE );
     }
 
@@ -106,16 +118,14 @@ void *publisher_thread(void *args) {
     uint32_t count = 0;
 
     while (!close_app) {
-        // generate_json_str ( buffer );
+        char *data = create_payload("mobile-1", "0193-0428", "cmd/series100/mobile-1/res");
 
-        char *data = create_monitor();
         if (data) {
             zmq_send ( publisher, PUBLISH_TOPIC, strlen (PUBLISH_TOPIC), ZMQ_SNDMORE );
             zmq_send ( publisher, data, strlen ( data ), ZMQ_DONTWAIT );
             free ( data );
         }
-
-        sleep ( 1 );
+        usleep ( 5000 );
     }
 
     dbg_log ("Shutting down publisher");
@@ -125,136 +135,102 @@ void *publisher_thread(void *args) {
 }
 
 
+void *collector_thread(void *args) {
+    int rc;
+    char msg[256];
+
+    char topic[128]; memset ( topic, 0, sizeof (topic));
+    char buffer[1024]; memset ( buffer, 0, sizeof (buffer));
+
+    void *collector;
+
+    collector = zmq_socket (context, ZMQ_PULL);
+    rc = zmq_bind (collector, SERVER_COLLECTADDR);
+    assert ( rc == 0);
+
+    zmq_setsockopt (collector, ZMQ_SUBSCRIBE, "", 0 );
+
+    sprintf (msg, "Collecting Message @ %s", SERVER_COLLECTADDR);
+    dbg_log (msg);
+
+    while (!close_app) {
+        zmq_recv (collector, topic,  sizeof (topic), 0 );
+        zmq_recv (collector, buffer, sizeof (buffer), 0 );
+
+        sprintf (msg, "Topic: %s, Message: %s", topic, buffer);
+        dbg_log ( msg );
+        // sleep ( 1 );
+    }
+    dbg_log ("Shutting down collector");
+    zmq_close (collector);
+
+    return (NULL);
+}
+
+
+
+
 void cleanup() {
     if (context) {
         zmq_ctx_term (context);
         dbg_log ("Completed shutting down ZMQ context");
-
         context = NULL;
     }
 }
 
-void generate_json_str (char *buffer) {
 
-    // sprintf ( 
-    //     buffer, 
-    //     "%s", // pattern
-    //     "mobile-1",
-    //     "0193-0428",
-    //     "cmd/series100/mobile-1/res",
-    //     "generate-passcode",
-    //     "visitor-1"
-    // );
+char *create_payload(const char *client_id, const char *session_id, const char *topic) {
+    char *str = NULL;
+    cJSON *payload = NULL;
+    cJSON *clientId = NULL;
+    cJSON *sessionId = NULL;
+    cJSON *topicId = NULL;
+    cJSON *action = NULL;
+    cJSON *type = NULL;
+    cJSON *uid = NULL;
 
-
-/*
-    typedef struct 
-    {
-        char type[32];
-        char uid[16];
-        
-    } smartlock_action_t;   
-
-    typedef struct
-    {
-        char code[8];
-
-    } smartlock_res_t;
-
-    typedef struct 
-    {
-        char client_id[32];
-        char session_id[16];
-        char topic[64];
-        smartlock_action_t action;
-
-    } smartlock_sub_t ;
-
-    typedef struct 
-    {
-        char client_id[32];
-        char session_id[16];
-        char passcode[64];
-        char ttl[16];
-        smartlock_res_t result;
-
-    } smartlock_pub_t;
-*/
-}
-
-
-
-//create a monitor with a list of supported resolutions
-//NOTE: Returns a heap allocated string, you are required to free it after use.
-// https://github.com/DaveGamble/cJSON
-char *create_monitor(void)
-{
-    const unsigned int resolution_numbers[3][2] = {
-        {1280, 720},
-        {1920, 1080},
-        {3840, 2160}
-    };
-    char *string = NULL;
-    cJSON *name = NULL;
-    cJSON *resolutions = NULL;
-    cJSON *resolution = NULL;
-    cJSON *width = NULL;
-    cJSON *height = NULL;
-    size_t index = 0;
-
-    cJSON *monitor = cJSON_CreateObject();
-    if (monitor == NULL)
-    {
+    payload = cJSON_CreateObject();
+    if (payload == NULL)
         goto end;
-    }
+    
 
-    name = cJSON_CreateString("Awesome 4K");
-    if (name == NULL)
-    {
+    clientId = cJSON_CreateString(client_id);
+    if (clientId == NULL)
         goto end;
-    }
-    /* after creation was successful, immediately add it to the monitor,
-     * thereby transferring ownership of the pointer to it */
-    cJSON_AddItemToObject(monitor, "name", name);
+    cJSON_AddItemToObject(payload, "clientId", clientId);
 
-    resolutions = cJSON_CreateArray();
-    if (resolutions == NULL)
-    {
+    sessionId = cJSON_CreateString(session_id);
+    if (sessionId == NULL)
         goto end;
-    }
-    cJSON_AddItemToObject(monitor, "resolutions", resolutions);
+    cJSON_AddItemToObject(payload, "sessionId", sessionId);
 
-    for (index = 0; index < (sizeof(resolution_numbers) / (2 * sizeof(int))); ++index)
-    {
-        resolution = cJSON_CreateObject();
-        if (resolution == NULL)
-        {
-            goto end;
-        }
-        cJSON_AddItemToArray(resolutions, resolution);
 
-        width = cJSON_CreateNumber(resolution_numbers[index][0]);
-        if (width == NULL)
-        {
-            goto end;
-        }
-        cJSON_AddItemToObject(resolution, "width", width);
+    topicId = cJSON_CreateString (topic);
+    if (topicId == NULL)
+        goto end;
+    cJSON_AddItemToObject(payload, "topicId", topicId);
 
-        height = cJSON_CreateNumber(resolution_numbers[index][1]);
-        if (height == NULL)
-        {
-            goto end;
-        }
-        cJSON_AddItemToObject(resolution, "height", height);
-    }
+    action = cJSON_CreateObject();
+    if (action == NULL)
+        goto end;
+    cJSON_AddItemToObject(payload, "action", action);
 
-    string = cJSON_Print(monitor);
-    if (string == NULL)
-    {
-        fprintf(stderr, "Failed to print monitor.\n");
-    }
+
+    type = cJSON_CreateString("generate-passcode");
+    if (type == NULL)
+        goto end;
+    cJSON_AddItemToObject(action, "type", type);
+
+    uid = cJSON_CreateString("visitor-1");
+    if (uid == NULL)
+        goto end;
+    cJSON_AddItemToObject(action, "uid", uid);
+
+    str = cJSON_Print(payload);
+    if (str == NULL)
+        dbg_log ("Failed to print payload");
 
 end:
-    cJSON_Delete(monitor);
-    return string;
+    cJSON_Delete(payload);
+    return str;
 }

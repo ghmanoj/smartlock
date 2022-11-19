@@ -8,16 +8,17 @@
 #include <assert.h>
 #include <string.h>
 #include <cjson/cJSON.h>
+#include <openssl/sha.h>
 
-#include "smart_lock_dsa.h"
+#include "smartlock_device.h"
 #include "logger.h"
 
 
 
 const char SUBCRIBE_TOPIC[]  = "cmd/series100/group-3/lock-1/+";
 const char PUBLISH_TOPIC[]   = "cmd/series100/group-3/lock-1/res";
-const char SERVER_SADDR[]    = "tcp://192.168.1.80:9091";
-const char SERVER_PADDR[]    = "tcp://192.168.1.80:9092";
+const char SERVER_SADDR[]    = "tcp://localhost:9091";
+const char SERVER_PADDR[]    = "tcp://localhost:9092";
 
 
 int subthread_arg            = 0;
@@ -33,6 +34,11 @@ pthread_t pubthread_id;
 void *context;
 
 
+/* Globals */
+
+static char sha1_string[SHA_DIGEST_LENGTH*2+1];
+
+
 /* prototypes */
 void cleanup();
 void *subcriber_thread();
@@ -44,7 +50,6 @@ int parse_sub_payload ( const char *message, int len, smartlock_sub_t *payload )
 
 static void signal_handler(int sig) {
     close_app = true;
-    sleep (1); // give some time for other threads
 
     char msg[256];
     bool is_error=false;
@@ -75,6 +80,17 @@ static void signal_handler(int sig) {
 int main() {
     signal(SIGINT,  signal_handler);
     signal(SIGSEGV, signal_handler);
+
+    
+    const char passcode[] = "OIJQOWIEJOQIWJEOJI123123~@#)(ii;";
+
+    unsigned char hash[SHA_DIGEST_LENGTH];
+    size_t code_length = strlen (passcode);
+    SHA1(passcode, code_length, hash);
+
+    for (int i=0; i< SHA_DIGEST_LENGTH;++i)
+        sprintf(&sha1_string[i*2], "%02x", (unsigned int)hash[i]);
+
 
     context = zmq_ctx_new ();
 
@@ -117,7 +133,9 @@ void *subcriber_thread(void *args) {
     int linger = 0; // Do not wait for timeout after socket close request.
     rc = zmq_setsockopt ( subcriber, ZMQ_LINGER, &linger, sizeof(linger) );
 
-    sprintf (msg, "Subcribed to topic %s ==== Publisher @ %s", SUBCRIBE_TOPIC, SERVER_SADDR);
+    sprintf (msg, "Subcribed Topic\t@ %s", SUBCRIBE_TOPIC);
+    dbg_log (msg);
+    sprintf (msg, "Publisher\t\t@ %s", SERVER_PADDR);
     dbg_log (msg);
 
     sleep (2);
@@ -156,23 +174,17 @@ void *publisher_thread(void *args) {
     int linger = 0; // Do not wait for timeout after socket close request.
     rc = zmq_setsockopt ( pusher, ZMQ_LINGER, &linger, sizeof(linger) );
 
-    sprintf (msg, "Pushing Messages to %s", SERVER_PADDR);
+    sprintf (msg, "Pushing Messages\t@ %s", SERVER_PADDR);
     dbg_log (msg);
 
-    char passcode[32];
-    uint32_t count = 0;
-
     while (!close_app) {
-        sprintf (passcode, "%u", count++);
-
-        char *data = create_payload ("lock-1", "0193-0428", passcode, "200");
+        char *data = create_payload ("lock-1", "0193-0428", sha1_string, "200");
         if (data) {
             zmq_send (pusher, PUBLISH_TOPIC, strlen (PUBLISH_TOPIC), ZMQ_SNDMORE);
             zmq_send (pusher, data, strlen (data), ZMQ_DONTWAIT);
-            
             free (data);
         }
-        usleep (1000);
+        sleep (1); // 1 second sleep
     }
     dbg_log ("Shutting down pusher");
     zmq_close (pusher);
@@ -181,12 +193,10 @@ void *publisher_thread(void *args) {
 int parse_sub_payload (const char *message, int len, smartlock_sub_t *payload) {
     if (!message || !payload) // edge cases handling
         return 1;
-
     cJSON *json = cJSON_ParseWithLength (message, len);
-
     char *str = cJSON_PrintUnformatted (json);
+
     dbg_log ( str );
-    
     cJSON_free (json);
     return 0;
 }
@@ -201,7 +211,7 @@ void cleanup() {
 
 
 char *create_payload(const char *client_id, const char *session_id, 
-                const char *pcode, const char *code_value) {
+                            const char *pcode, const char *code_value) {
     char *str = NULL;
     cJSON *payload = NULL;
     cJSON *clientId = NULL;

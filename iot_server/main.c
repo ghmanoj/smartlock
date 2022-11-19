@@ -7,16 +7,11 @@
 #include <unistd.h>
 #include <assert.h>
 #include <string.h>
-
 #include <cjson/cJSON.h>
 
+#include "logger.h"
 
 
-void dbg_log ( const char *message )
-{
-    fprintf ( stdout, "LOG[INFO]: %s\n", message );
-    fflush ( stdout );
-}
 
 
 const char PUBLISH_TOPIC[]      = "cmd/series100/group-3/lock-1/+";
@@ -47,7 +42,7 @@ char *create_payload(const char *client_id, const char *session_id, const char *
 
 static void signal_handler(int sig) {
     close_app = true;
-    sleep (1); // give some time for other threads
+
 
     char msg[256];
     bool is_error=false;
@@ -65,10 +60,8 @@ static void signal_handler(int sig) {
             dbg_log ( msg );
             break;
     }
-
     cleanup ();
 
-    sleep (1);
     if (is_error) 
         exit (EXIT_FAILURE);
     else 
@@ -112,7 +105,7 @@ void *publisher_thread(void *args) {
     rc = zmq_bind (publisher, SERVER_PUBADDR);
     assert ( rc == 0);
 
-    sprintf (msg, "Publishing @ %s", SERVER_PUBADDR);
+    sprintf (msg, "Publishing Messages\t@ %s", SERVER_PUBADDR);
     dbg_log (msg);
 
     uint32_t count = 0;
@@ -125,7 +118,7 @@ void *publisher_thread(void *args) {
             zmq_send ( publisher, data, strlen ( data ), ZMQ_DONTWAIT );
             free ( data );
         }
-        usleep ( 5000 );
+        usleep ( 10000000 ); // 10 second for publishing each message
     }
 
     dbg_log ("Shutting down publisher");
@@ -150,16 +143,22 @@ void *collector_thread(void *args) {
 
     zmq_setsockopt (collector, ZMQ_SUBSCRIBE, "", 0 );
 
-    sprintf (msg, "Collecting Message @ %s", SERVER_COLLECTADDR);
+    sprintf (msg, "Collecting Messages\t@ %s", SERVER_COLLECTADDR);
     dbg_log (msg);
 
     while (!close_app) {
-        zmq_recv (collector, topic,  sizeof (topic), 0 );
-        zmq_recv (collector, buffer, sizeof (buffer), 0 );
-
+        rc = zmq_recv (collector, topic,  sizeof (topic), 0 );
+        if (rc == -1) {
+            perror("collector_thread()");
+            break;
+        }
+        rc = zmq_recv (collector, buffer, sizeof (buffer), 0 );
+        if (rc == -1) {
+            perror("collector_thread()");
+            break;
+        }
         sprintf (msg, "Topic: %s, Message: %s", topic, buffer);
         dbg_log ( msg );
-        // sleep ( 1 );
     }
     dbg_log ("Shutting down collector");
     zmq_close (collector);

@@ -1,5 +1,5 @@
-#ifndef _SMART_LOCK_DSA_H_
-#define _SMART_LOCK_DSA_H_
+#ifndef __SMARTLOCK_DEVICE_INCLUDED__
+#define __SMARTLOCK_DEVICE_INCLUDED__
 
 typedef struct 
 {

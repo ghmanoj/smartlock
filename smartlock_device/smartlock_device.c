@@ -14,7 +14,7 @@
 #include "logger.h"
 
 
-
+const char LOCK_ID[]         = "lock-1";
 const char SUBCRIBE_TOPIC[]  = "cmd/series100/group-3/lock-1/+";
 const char PUBLISH_TOPIC[]   = "cmd/series100/group-3/lock-1/res";
 const char SERVER_SADDR[]    = "tcp://localhost:9091";
@@ -35,7 +35,6 @@ void *context;
 
 
 /* Globals */
-
 static char sha1_string[SHA_DIGEST_LENGTH*2+1];
 
 
@@ -178,13 +177,13 @@ void *publisher_thread(void *args) {
     dbg_log (msg);
 
     while (!close_app) {
-        char *data = create_payload ("lock-1", "0193-0428", sha1_string, "200");
+        char *data = create_payload (LOCK_ID, "0193-0428", sha1_string, "200");
         if (data) {
             zmq_send (pusher, PUBLISH_TOPIC, strlen (PUBLISH_TOPIC), ZMQ_SNDMORE);
             zmq_send (pusher, data, strlen (data), ZMQ_DONTWAIT);
             free (data);
         }
-        sleep (1); // 1 second sleep
+        usleep (1000000); // sleep 1 second?
     }
     dbg_log ("Shutting down pusher");
     zmq_close (pusher);

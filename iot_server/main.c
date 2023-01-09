@@ -8,7 +8,6 @@
 #include <assert.h>
 #include <string.h>
 #include <cjson/cJSON.h>
-
 #include "logger.h"
 
 
@@ -72,6 +71,8 @@ int main() {
     signal(SIGINT,  signal_handler);
     signal(SIGSEGV, signal_handler);
 
+    srand (time(NULL));
+
     context = zmq_ctx_new ();
 
     if (pthread_create (&pubthread_id, NULL, 
@@ -98,7 +99,8 @@ void *publisher_thread(void *args) {
     int rc;
     int recv_len=0;
     char msg[256];
-    char buffer[1024];
+    char client_id[16];
+    char session_id[16];
     void *publisher;
 
     publisher = zmq_socket (context, ZMQ_PUB);
@@ -107,18 +109,34 @@ void *publisher_thread(void *args) {
 
     sprintf (msg, "Publishing Messages\t@ %s", SERVER_PUBADDR);
     dbg_log (msg);
-
-    uint32_t count = 0;
+    usleep ( 500000 );
+    fprintf (stdout, "\n");
 
     while (!close_app) {
-        char *data = create_payload("mobile-1", "0193-0428", "cmd/series100/mobile-1/res");
+        fprintf (stdout, "Client-ID: ");
 
-        if (data) {
-            zmq_send ( publisher, PUBLISH_TOPIC, strlen (PUBLISH_TOPIC), ZMQ_SNDMORE );
-            zmq_send ( publisher, data, strlen ( data ), ZMQ_DONTWAIT );
-            free ( data );
+        if (fgets(client_id, 16, stdin)) {
+            size_t sz = strlen(client_id);
+            if (sz > 1) {
+                client_id[sz-1] = '\0';
+                int sf_id = 100 + rand()%100;
+                int sb_id = 1000 + rand()%1000;
+                sprintf (session_id, "%d-%d",sf_id, sb_id);
+                char *data = create_payload(client_id, session_id, "cmd/series100/mobile-1/res");
+                if (data) {
+                    zmq_send ( publisher, PUBLISH_TOPIC, strlen (PUBLISH_TOPIC), ZMQ_SNDMORE );
+                    zmq_send ( publisher, data, strlen ( data ), ZMQ_DONTWAIT );
+                    free ( data );
+                }
+            } else {
+                sprintf (msg, "Received invalid client_id of size %d", sz);
+                dbg_log (msg);
+            }
+        } else {
+            dbg_log("Failed to read input");
+            break;
         }
-        usleep ( 10000000 ); // 10 second for publishing each message
+        usleep ( 10000 ); // sleep for 10ms
     }
 
     dbg_log ("Shutting down publisher");
